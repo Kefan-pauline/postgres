@@ -19,7 +19,7 @@
  *
  *-------------------------------------------------------------------------
  */
-
+ 
 /*----------
  * Operator selectivity estimation functions are called to estimate the
  * selectivity of WHERE clauses whose top-level operator is their operator.
