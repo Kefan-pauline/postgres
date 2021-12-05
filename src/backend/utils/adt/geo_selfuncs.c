@@ -21,6 +21,16 @@
 #include "utils/builtins.h"
 #include "utils/geo_decls.h"
 
+#include "access/htup_details.h"
+#include "catalog/pg_statistic.h"
+#include "nodes/pg_list.h"
+#include "optimizer/pathnode.h"
+#include "optimizer/optimizer.h"
+#include "utils/lsyscache.h"
+#include "utils/typcache.h"
+#include "utils/selfuncs.h"
+#include "utils/rangetypes.h"
+
 
 /*
  *	Selectivity functions for geometric operators.  These are bogus -- unless
@@ -40,6 +50,103 @@
  *	realistic numbers here, it hardly matters...
  */
 
+/*
+ * Range Overlaps Join Selectivity.
+ */
+Datum
+rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
+{
+    PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
+    Oid         operator = PG_GETARG_OID(1);
+    List       *args = (List *) PG_GETARG_POINTER(2);     /* left and right columns for joins*/
+    JoinType    jointype = (JoinType) PG_GETARG_INT16(3);
+    SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) PG_GETARG_POINTER(4);
+    Oid         collation = PG_GET_COLLATION();
+
+    double      selec = 0.005;
+
+    VariableStatData vardata1;
+    VariableStatData vardata2;
+    Oid         opfuncoid;
+    AttStatsSlot sslot1;
+    int         nhist;
+    RangeBound *hist_lower1;
+    RangeBound *hist_upper1;
+    int         i;
+    Form_pg_statistic stats1 = NULL;
+    TypeCacheEntry *typcache = NULL;
+    bool        join_is_reversed;
+    bool        empty;
+
+
+    get_join_variables(root, args, sjinfo,                        /* store data of left and right columns */
+                       &vardata1, &vardata2, &join_is_reversed);
+
+    typcache = range_get_typcache(fcinfo, vardata1.vartype);
+    opfuncoid = get_opcode(operator);
+
+    memset(&sslot1, 0, sizeof(sslot1));
+
+    /* Can't use the histogram with insecure range support functions */
+    if (!statistic_proc_security_check(&vardata1, opfuncoid))
+        PG_RETURN_FLOAT8((float8) selec);
+
+    if (HeapTupleIsValid(vardata1.statsTuple))
+    {
+        stats1 = (Form_pg_statistic) GETSTRUCT(vardata1.statsTuple);
+        /* Try to get fraction of empty ranges */
+        if (!get_attstatsslot(&sslot1, vardata1.statsTuple,        /* store in slot1 (5 in total) the histogram, here the bound hist */
+                             STATISTIC_KIND_BOUNDS_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
+    }
+
+    nhist = sslot1.nvalues;    /* split the bounds into lower and upper : bound hist contains ranges, we deserialize */
+    hist_lower1 = (RangeBound *) palloc(sizeof(RangeBound) * nhist);
+    hist_upper1 = (RangeBound *) palloc(sizeof(RangeBound) * nhist);
+    for (i = 0; i < nhist; i++)
+    {
+        range_deserialize(typcache, DatumGetRangeTypeP(sslot1.values[i]),
+                          &hist_lower1[i], &hist_upper1[i], &empty);
+        /* The histogram should not contain any empty ranges */
+        if (empty)
+            elog(ERROR, "bounds histogram contains an empty range");
+    }
+
+    printf("hist_lower = [");
+    for (i = 0; i < nhist; i++)
+    {
+        printf("%d", DatumGetInt16(hist_lower1[i].val));
+        if (i < nhist - 1)
+            printf(", ");
+    }
+    printf("]\n");
+    printf("hist_upper = [");
+    for (i = 0; i < nhist; i++)
+    {
+        printf("%d", DatumGetInt16(hist_upper1[i].val));
+        if (i < nhist - 1)
+            printf(", ");
+    }
+    printf("]\n");
+
+    fflush(stdout);
+
+    pfree(hist_lower1);
+    pfree(hist_upper1);
+
+    free_attstatsslot(&sslot1);
+
+    ReleaseVariableStats(vardata1);
+    ReleaseVariableStats(vardata2);
+
+    CLAMP_PROBABILITY(selec);
+    PG_RETURN_FLOAT8((float8) selec);
+}
 
 /*
  * Selectivity for operators that depend on area, such as "overlap".

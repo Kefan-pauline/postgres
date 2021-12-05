@@ -32,11 +32,22 @@
 #include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
 
+
+typedef struct histogram {
+
+	int steps;
+	Datum low; // min value of ranges
+	Datum max; // max value of ranges
+	int *values;
+
+}histogram, *histogram_t;
+
 static int	float8_qsort_cmp(const void *a1, const void *a2);
 static int	range_bound_qsort_cmp(const void *a1, const void *a2, void *arg);
 static void compute_range_stats(VacAttrStats *stats,
 								AnalyzeAttrFetchFunc fetchfunc, int samplerows,
 								double totalrows);
+static histogram_t histogram_new(int step, Datum low, Datum max,int length); 
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -58,7 +69,6 @@ range_typanalyze(PG_FUNCTION_ARGS)
 	stats->extra_data = typcache;
 	/* same as in std_typanalyze */
 	stats->minrows = 300 * attr->attstattarget;
-
 	PG_RETURN_BOOL(true);
 }
 
@@ -119,6 +129,32 @@ range_bound_qsort_cmp(const void *a1, const void *a2, void *arg)
 	return range_cmp_bounds(typcache, b1, b2);
 }
 
+/* ok */
+static void display_values(histogram_t hist,int length){
+	int i;
+	for(i=0;i<length;i++){
+		printf("%d\n",hist->values[i]);
+		fflush(stdout);
+	}
+}
+
+/* ok */
+static histogram_t histogram_new(int step, Datum low, Datum max, int length) {
+
+	histogram hist = {step, low, max, calloc(length, sizeof(int)) };
+	histogram_t res = malloc(sizeof(histogram));
+	*res = hist;
+	return res;
+	
+}
+
+static int convert_bound_to_index(Datum bound, int step){
+	int* pointer1;
+	pointer1 = (int*) bound;
+	//printf("%d\n",(*pointer1/ step));
+	return (int) (*pointer1/ step);
+}
+
 /*
  * compute_range_stats() -- compute statistics for a range column
  */
@@ -141,6 +177,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	RangeBound *lowers,
 			   *uppers;
 	double		total_width = 0;
+	histogram_t overlap_hist;
 
 	if (typcache->typtype == TYPTYPE_MULTIRANGE)
 	{
@@ -155,6 +192,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	lowers = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
 	uppers = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
 	lengths = (float8 *) palloc(sizeof(float8) * samplerows);
+	
 
 	/* Loop over the sample ranges. */
 	for (range_no = 0; range_no < samplerows; range_no++)
@@ -246,6 +284,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 
 		non_null_cnt++;
 	}
+	
 
 	slot_idx = 0;
 
@@ -273,18 +312,34 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		/* Must copy the target values into anl_context */
 		old_cxt = MemoryContextSwitchTo(stats->anl_context);
 
+
 		/*
 		 * Generate a bounds histogram slot entry if there are at least two
 		 * values.
 		 */
 		if (non_empty_cnt >= 2)
 		{
+			Datum hist_low;
+			Datum hist_up;
+			int step;
+			int index_low;
+			int index_up;
+			int j;
+			int len;
+			
 			/* Sort bound values */
 			qsort_arg(lowers, non_empty_cnt, sizeof(RangeBound),
 					  range_bound_qsort_cmp, typcache);
 			qsort_arg(uppers, non_empty_cnt, sizeof(RangeBound),
 					  range_bound_qsort_cmp, typcache);
 
+			hist_low = *(int*)PointerGetDatum(&lowers[0]);
+			hist_up = *(int*)PointerGetDatum(&uppers[samplerows-1]);
+			step = 2;
+			len = (hist_up - hist_low)/step;
+			
+			overlap_hist = histogram_new(step,hist_low,hist_up,len);
+			
 			num_hist = non_empty_cnt;
 			if (num_hist > num_bins)
 				num_hist = num_bins + 1;
@@ -312,6 +367,12 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 																	   &lowers[pos],
 																	   &uppers[pos],
 																	   false));
+				index_low = convert_bound_to_index(PointerGetDatum(&lowers[pos]), step);												   
+				index_up = convert_bound_to_index(PointerGetDatum(&uppers[pos]), step);
+				for (j = index_low; j <= index_up; j++){
+					overlap_hist->values[j]++;
+				}	
+						   
 				pos += delta;
 				posfrac += deltafrac;
 				if (posfrac >= (num_hist - 1))
@@ -321,9 +382,11 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 					posfrac -= (num_hist - 1);
 				}
 			}
+			
+			
 
-			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;
-			stats->stavalues[slot_idx] = bound_hist_values;
+			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;   /* need a new cst */
+			stats->stavalues[slot_idx] = bound_hist_values;     /* save value as range */
 			stats->numvalues[slot_idx] = num_hist;
 
 			/* Store ranges even if we're analyzing a multirange column */
@@ -333,7 +396,24 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			stats->statypalign[slot_idx] = typcache->typalign;
 
 			slot_idx++;
+			
+			/* stock overlap histgram */
+			stats->stakind[slot_idx] = STATISTIC_KIND_OVERLAP_HISTOGRAM;   /* need a new cst */
+			stats->stavalues[slot_idx] = overlap_hist->values;     
+			stats->numvalues[slot_idx] = len;
+
+			/* Store ranges even if we're analyzing a multirange column */
+			stats->statypid[slot_idx] = FLOAT8OID;              /* 4 lines : length hist is float values */
+			stats->statyplen[slot_idx] = sizeof(float8);
+			stats->statypbyval[slot_idx] = FLOAT8PASSBYVAL;
+			stats->statypalign[slot_idx] = 'd';
+
+			
+			slot_idx++;
+			
 		}
+		
+
 
 		/*
 		 * Generate a length histogram slot entry if there are at least two
@@ -394,7 +474,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		stats->stacoll[slot_idx] = InvalidOid;
 		stats->stavalues[slot_idx] = length_hist_values;
 		stats->numvalues[slot_idx] = num_hist;
-		stats->statypid[slot_idx] = FLOAT8OID;
+		stats->statypid[slot_idx] = FLOAT8OID;              /* 4 lines : length hist is float values */
 		stats->statyplen[slot_idx] = sizeof(float8);
 		stats->statypbyval[slot_idx] = FLOAT8PASSBYVAL;
 		stats->statypalign[slot_idx] = 'd';
@@ -402,7 +482,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		/* Store the fraction of empty ranges */
 		emptyfrac = (float4 *) palloc(sizeof(float4));
 		*emptyfrac = ((double) empty_cnt) / ((double) non_null_cnt);
-		stats->stanumbers[slot_idx] = emptyfrac;
+		stats->stanumbers[slot_idx] = emptyfrac;  /* a list of float used for empty ranges */
 		stats->numnumbers[slot_idx] = 1;
 
 		stats->stakind[slot_idx] = STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM;
@@ -424,3 +504,105 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	 * hashtable should also go away, as it used a child memory context.
 	 */
 }
+
+
+/*
+typedef struct dict_entry_s {
+
+	RangeType *key;
+	int value;
+
+} dict_entry;
+
+typedef struct dict_mcv {
+
+	int len;
+	int limit_entry;
+	dict_entry *entry;
+	
+} dict_mcv, *dict_t;
+
+
+int dict_find_index(dict_t dict, RangeType *key) {
+	VacAttrStats *stats = (VacAttrStats *) PG_GETARG_POINTER(0);
+	TypeCacheEntry *typcache;
+	Form_pg_attribute attr = stats->attr;
+	typcache = range_get_typcache(fcinfo, getBaseType(stats->attrtypid));
+	
+	for(int i = 0; i < dict->len; i++) {
+		if(typcache,dict->entry[i].key, key) { //range compare
+			return i;
+		}
+	}
+	
+	return -1;
+}
+
+
+
+void dict_add(dict_t dict, RangeType *key) {
+
+	
+	int index = dict_find_index(dict, key);
+	
+	if(dict->len == dict->limit_entry) {
+		dict->limit_entry *= 2;
+		dict->entry = realloc(dict->entry, dict->limit_entry * sizeof(dict_entry));
+	}
+	
+	if(index != -1) {
+		dict->entry[index].value += 1;
+		return;
+	}
+	
+	dict->entry[dict->len].key = strdup(key);
+	dict->entry[dict->len].value = 1;
+	dict->len++;
+	
+}
+
+dict_t dict_new(void) {
+
+	int limit;
+	limit = 20;
+
+	dict_mcv dict = {0, limit, malloc(limit * sizeof(dict_entry)) };
+	dict_t res = malloc(sizeof(dict_mcv));
+	*res = dict;
+	return res;
+	
+}
+
+
+void dict_free(dict_t dict) {
+
+
+	for(int i = 0; i < dict->len; i++) {
+		free(dict->entry[i].key);
+	} 
+	
+	free(dict->entry);
+	free(dict);
+
+}
+
+
+void display_dict(dict_t dict, RangeType *key) {
+	
+	int index;
+
+	index = dict_find_index(dict, key);
+	
+	if(index != -1) {
+		printf("Key %s : %d\n", key, dict->entry[index].value);
+		return;
+	}
+	
+	else {
+		printf("Erreur Key not found !\n");
+	}
+}*/
+
+
+
+
