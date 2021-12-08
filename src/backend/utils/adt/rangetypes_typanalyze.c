@@ -38,7 +38,7 @@ typedef struct histogram {
 	int steps;
 	Datum low; // min value of ranges
 	Datum max; // max value of ranges
-	int *values;
+	int* values;
 
 }histogram, *histogram_t;
 
@@ -314,18 +314,20 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 
 
 		/*
-		 * Generate a bounds histogram slot entry if there are at least two
+		 * Generate a bounds and overlap histogram slot entry if there are at least two
 		 * values.
 		 */
 		if (non_empty_cnt >= 2)
 		{
-			Datum hist_low;
-			Datum hist_up;
+			Datum hist_low; // min value
+			Datum hist_up; // max value
 			int step;
 			int index_low;
 			int index_up;
 			int j;
-			int len;
+			int len; // number of bins, also the length of values
+			Datum    *overlap_hist2;
+			
 			
 			/* Sort bound values */
 			qsort_arg(lowers, non_empty_cnt, sizeof(RangeBound),
@@ -337,8 +339,10 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			hist_up = *(int*)PointerGetDatum(&uppers[samplerows-1]);
 			step = 2;
 			len = (hist_up - hist_low)/step;
+
 			
 			overlap_hist = histogram_new(step,hist_low,hist_up,len);
+			overlap_hist2 = (Datum *) palloc(len * sizeof(Datum));
 			
 			num_hist = non_empty_cnt;
 			if (num_hist > num_bins)
@@ -383,8 +387,12 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				}
 			}
 			
+			for(i=0;i<len;i++){
+				overlap_hist2[i] = overlap_hist->values[i];
 			
+			}
 
+			
 			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;   /* need a new cst */
 			stats->stavalues[slot_idx] = bound_hist_values;     /* save value as range */
 			stats->numvalues[slot_idx] = num_hist;
@@ -397,17 +405,18 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 
 			slot_idx++;
 			
+			
 			/* stock overlap histgram */
-			stats->stakind[slot_idx] = STATISTIC_KIND_OVERLAP_HISTOGRAM;   /* need a new cst */
-			stats->stavalues[slot_idx] = overlap_hist->values;     
+
+			stats->stakind[slot_idx] = STATISTIC_KIND_OVERLAP_HISTOGRAM;  
+			stats->stavalues[slot_idx] = overlap_hist2;     
 			stats->numvalues[slot_idx] = len;
 
-			/* Store ranges even if we're analyzing a multirange column */
+
 			stats->statypid[slot_idx] = FLOAT8OID;              /* 4 lines : length hist is float values */
 			stats->statyplen[slot_idx] = sizeof(float8);
 			stats->statypbyval[slot_idx] = FLOAT8PASSBYVAL;
 			stats->statypalign[slot_idx] = 'd';
-
 			
 			slot_idx++;
 			

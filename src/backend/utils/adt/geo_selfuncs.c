@@ -56,6 +56,7 @@
 Datum
 rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
 {
+
     PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
     Oid         operator = PG_GETARG_OID(1);
     List       *args = (List *) PG_GETARG_POINTER(2);     /* left and right columns for joins*/
@@ -68,15 +69,19 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     VariableStatData vardata1;
     VariableStatData vardata2;
     Oid         opfuncoid;
-    AttStatsSlot sslot1;
+    AttStatsSlot sslot1; // bound hist
+    AttStatsSlot sslot2; // overlap hist
     int         nhist;
+    int         len;
     RangeBound *hist_lower1;
     RangeBound *hist_upper1;
+    int*        hist_overlap;  
     int         i;
     Form_pg_statistic stats1 = NULL;
     TypeCacheEntry *typcache = NULL;
     bool        join_is_reversed;
     bool        empty;
+    
 
 
     get_join_variables(root, args, sjinfo,                        /* store data of left and right columns */
@@ -84,9 +89,10 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
 
     typcache = range_get_typcache(fcinfo, vardata1.vartype);
     opfuncoid = get_opcode(operator);
-
+    
     memset(&sslot1, 0, sizeof(sslot1));
-
+    memset(&sslot2, 0, sizeof(sslot2));
+    
     /* Can't use the histogram with insecure range support functions */
     if (!statistic_proc_security_check(&vardata1, opfuncoid))
         PG_RETURN_FLOAT8((float8) selec);
@@ -97,6 +103,14 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         /* Try to get fraction of empty ranges */
         if (!get_attstatsslot(&sslot1, vardata1.statsTuple,        /* store in slot1 (5 in total) the histogram, here the bound hist */
                              STATISTIC_KIND_BOUNDS_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
+        if (!get_attstatsslot(&sslot2, vardata1.statsTuple,        /* store in slot2 (5 in total) the histogram, here the overlap hist */
+                             STATISTIC_KIND_OVERLAP_HISTOGRAM,
                              InvalidOid, ATTSTATSSLOT_VALUES))
         {
             ReleaseVariableStats(vardata1);
@@ -117,6 +131,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
             elog(ERROR, "bounds histogram contains an empty range");
     }
 
+    /*
     printf("hist_lower = [");
     for (i = 0; i < nhist; i++)
     {
@@ -132,14 +147,40 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         if (i < nhist - 1)
             printf(", ");
     }
+    printf("]\n");*/
+    
+
+    len = sslot2.nvalues;
+    hist_overlap = (int*) palloc(sizeof(int)*len);
+
+    
+    
+    for (i = 0; i < len; i++)
+    {
+        hist_overlap[i] = sslot2.values[i];
+                        
+    }
+    
+    
+    printf("len : %d \n",len);
+    
+    printf("hist_overlap = [");
+    for (i = 0; i < len; i++)
+    {
+        printf("%d", hist_overlap[i]);
+        if (i < len - 1)
+            printf(", ");
+    }
     printf("]\n");
 
     fflush(stdout);
 
     pfree(hist_lower1);
     pfree(hist_upper1);
+    pfree(hist_overlap);
 
     free_attstatsslot(&sslot1);
+    free_attstatsslot(&sslot2);
 
     ReleaseVariableStats(vardata1);
     ReleaseVariableStats(vardata2);
