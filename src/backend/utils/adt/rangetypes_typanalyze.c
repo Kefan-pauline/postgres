@@ -42,12 +42,37 @@ typedef struct histogram {
 
 }histogram, *histogram_t;
 
+typedef struct dict_entry_s {
+
+	RangeType *key;
+	int value;
+
+} dict_entry;
+
+typedef struct dict_mcv {
+
+	int len;
+	int limit_entry;
+	dict_entry *entry;
+	
+} dict_mcv, *dict_t;
+
+static dict_t dict;
+static RangeType *key;
+
+
 static int	float8_qsort_cmp(const void *a1, const void *a2);
 static int	range_bound_qsort_cmp(const void *a1, const void *a2, void *arg);
 static void compute_range_stats(VacAttrStats *stats,
 								AnalyzeAttrFetchFunc fetchfunc, int samplerows,
 								double totalrows);
+								
 static histogram_t histogram_new(int step, Datum low, Datum max,int length); 
+
+static void dict_add(dict_t dict, RangeType *key);
+static dict_t dict_new(void);
+static void dict_free(dict_t dict);
+static void display_dict(dict_t dict, RangeType *key);
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -129,7 +154,12 @@ range_bound_qsort_cmp(const void *a1, const void *a2, void *arg)
 	return range_cmp_bounds(typcache, b1, b2);
 }
 
-/* ok */
+
+
+/*
+ * Overlaping histogram functions.
+ */
+ 
 static void display_values(histogram_t hist,int length){
 	int i;
 	for(i=0;i<length;i++){
@@ -138,7 +168,6 @@ static void display_values(histogram_t hist,int length){
 	}
 }
 
-/* ok */
 static histogram_t histogram_new(int step, Datum low, Datum max, int length) {
 
 	histogram hist = {step, low, max, calloc(length, sizeof(int)) };
@@ -153,6 +182,90 @@ static int convert_bound_to_index(Datum bound, int step){
 	pointer1 = (int*) bound;
 	//printf("%d\n",(*pointer1/ step));
 	return (int) (*pointer1/ step);
+}
+
+
+/*
+ * MCV functions.
+ */
+ 
+int dict_find_index(PG_FUNCTION_ARGS) {
+ 
+ 	bool res;
+ 	TypeCacheEntry *typcache;
+ 	
+ 	typcache = range_get_typcache(fcinfo, RangeTypeGetOid(key));
+ 	
+ 	for(int i = 0; i < dict->len; i++) {
+ 	
+ 		res = range_eq_internal(typcache,dict->entry[i].key, key);
+ 		
+ 		if(res) { return i;}
+		
+	}
+
+ }
+ 
+static void dict_add(dict_t dict, RangeType *key) {
+
+	
+	int index = dict_find_index("nothing");
+	
+	if(dict->len == dict->limit_entry) {
+		dict->limit_entry *= 2;
+		dict->entry = realloc(dict->entry, dict->limit_entry * sizeof(dict_entry));
+	}
+	
+	if(index != -1) {
+		dict->entry[index].value += 1;
+		return;
+	}
+	
+	dict->entry[dict->len].key = strdup(key);
+	dict->entry[dict->len].value = 1;
+	dict->len++;
+	
+}
+
+static dict_t dict_new(void) {
+	
+	dict_t res;
+	
+	dict_mcv dict = {0, 20, malloc(20 * sizeof(dict_entry)) };
+	res = malloc(sizeof(dict_mcv));
+	*res = dict;
+	return res;
+	
+}
+
+
+static void dict_free(dict_t dict) {
+
+
+	for(int i = 0; i < dict->len; i++) {
+		free(dict->entry[i].key);
+	} 
+	
+	free(dict->entry);
+	free(dict);
+
+}
+
+
+static void display_dict(dict_t dict, RangeType *key) {
+	
+	int index;
+
+	index = dict_find_index("nothing");
+	
+	if(index != -1) {
+		//printf("Key %s : %d\n", key, dict->entry[index].value);
+		return;
+	}
+	
+	else {
+		printf("Erreur Key not found !\n");
+	}
 }
 
 /*
@@ -504,105 +617,5 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	 * hashtable should also go away, as it used a child memory context.
 	 */
 }
-
-
-/*
-typedef struct dict_entry_s {
-
-	RangeType *key;
-	int value;
-
-} dict_entry;
-
-typedef struct dict_mcv {
-
-	int len;
-	int limit_entry;
-	dict_entry *entry;
-	
-} dict_mcv, *dict_t;
-
-
-int dict_find_index(dict_t dict, RangeType *key) {
-	VacAttrStats *stats = (VacAttrStats *) PG_GETARG_POINTER(0);
-	TypeCacheEntry *typcache;
-	Form_pg_attribute attr = stats->attr;
-	typcache = range_get_typcache(fcinfo, getBaseType(stats->attrtypid));
-	
-	for(int i = 0; i < dict->len; i++) {
-		if(typcache,dict->entry[i].key, key) { //range compare
-			return i;
-		}
-	}
-	
-	return -1;
-}
-
-
-
-void dict_add(dict_t dict, RangeType *key) {
-
-	
-	int index = dict_find_index(dict, key);
-	
-	if(dict->len == dict->limit_entry) {
-		dict->limit_entry *= 2;
-		dict->entry = realloc(dict->entry, dict->limit_entry * sizeof(dict_entry));
-	}
-	
-	if(index != -1) {
-		dict->entry[index].value += 1;
-		return;
-	}
-	
-	dict->entry[dict->len].key = strdup(key);
-	dict->entry[dict->len].value = 1;
-	dict->len++;
-	
-}
-
-dict_t dict_new(void) {
-
-	int limit;
-	limit = 20;
-
-	dict_mcv dict = {0, limit, malloc(limit * sizeof(dict_entry)) };
-	dict_t res = malloc(sizeof(dict_mcv));
-	*res = dict;
-	return res;
-	
-}
-
-
-void dict_free(dict_t dict) {
-
-
-	for(int i = 0; i < dict->len; i++) {
-		free(dict->entry[i].key);
-	} 
-	
-	free(dict->entry);
-	free(dict);
-
-}
-
-
-void display_dict(dict_t dict, RangeType *key) {
-	
-	int index;
-
-	index = dict_find_index(dict, key);
-	
-	if(index != -1) {
-		printf("Key %s : %d\n", key, dict->entry[index].value);
-		return;
-	}
-	
-	else {
-		printf("Erreur Key not found !\n");
-	}
-}*/
-
-
 
 
