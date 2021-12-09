@@ -592,6 +592,9 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			length_hist_values = palloc(0);
 			num_hist = 0;
 		}
+		
+		   
+		
 		stats->staop[slot_idx] = Float8LessOperator;
 		stats->stacoll[slot_idx] = InvalidOid;
 		stats->stavalues[slot_idx] = length_hist_values;

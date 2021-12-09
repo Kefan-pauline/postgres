@@ -69,18 +69,29 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     VariableStatData vardata1;
     VariableStatData vardata2;
     Oid         opfuncoid;
-    AttStatsSlot sslot1; // bound hist
-    AttStatsSlot sslot2; // overlap hist
+    AttStatsSlot sslot1; // bound hist for column 1
+    AttStatsSlot sslot2; // overlap hist for column 1
+    AttStatsSlot sslot3; // length hist for column 1
+    AttStatsSlot sslot4; // overlap hist for column 2
+    AttStatsSlot sslot5; // length hist for column 2
     int         nhist;
+    int         nhist2;
     int         len;
+    int         len2;
     RangeBound *hist_lower1;
     RangeBound *hist_upper1;
     int*        hist_overlap;  
+    int*        hist_overlap2;  
     int         i;
     Form_pg_statistic stats1 = NULL;
     TypeCacheEntry *typcache = NULL;
     bool        join_is_reversed;
     bool        empty;
+    int         loop_max;
+    int         result = 0;
+    float       mu1 = 0;
+    float       mu2 = 0;
+    
     
 
 
@@ -92,6 +103,9 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
     memset(&sslot1, 0, sizeof(sslot1));
     memset(&sslot2, 0, sizeof(sslot2));
+    memset(&sslot3, 0, sizeof(sslot3));
+    memset(&sslot4, 0, sizeof(sslot4));
+    memset(&sslot5, 0, sizeof(sslot5));
     
     /* Can't use the histogram with insecure range support functions */
     if (!statistic_proc_security_check(&vardata1, opfuncoid))
@@ -117,9 +131,34 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
             ReleaseVariableStats(vardata2);
             PG_RETURN_FLOAT8((float8) selec);
         }
+        if (!get_attstatsslot(&sslot3, vardata1.statsTuple,        /* store in slot2 (5 in total) the histogram, here the len hist */
+                             STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
+        if (!get_attstatsslot(&sslot4, vardata2.statsTuple,        /* store in slot2 (5 in total) the histogram, here the overlap hist */
+                             STATISTIC_KIND_OVERLAP_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
+        if (!get_attstatsslot(&sslot5, vardata2.statsTuple,        /* store in slot2 (5 in total) the histogram, here the len hist */
+                             STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
     }
 
     nhist = sslot1.nvalues;    /* split the bounds into lower and upper : bound hist contains ranges, we deserialize */
+    
     hist_lower1 = (RangeBound *) palloc(sizeof(RangeBound) * nhist);
     hist_upper1 = (RangeBound *) palloc(sizeof(RangeBound) * nhist);
     for (i = 0; i < nhist; i++)
@@ -130,7 +169,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         if (empty)
             elog(ERROR, "bounds histogram contains an empty range");
     }
-
+    
     /*
     printf("hist_lower = [");
     for (i = 0; i < nhist; i++)
@@ -150,18 +189,19 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     printf("]\n");*/
     
 
+
+
+
     len = sslot2.nvalues;
     hist_overlap = (int*) palloc(sizeof(int)*len);
 
-    
-    
     for (i = 0; i < len; i++)
     {
         hist_overlap[i] = sslot2.values[i];
                         
     }
     
-    
+    /*
     printf("len : %d \n",len);
     
     printf("hist_overlap = [");
@@ -172,15 +212,72 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
             printf(", ");
     }
     printf("]\n");
+    */
+    
+    
+    
 
-    fflush(stdout);
+    
+    for (i = 0; i < nhist; i++)
+    {
+        mu1 += DatumGetFloat8(sslot3.values[i]);
+    }
+    mu1 = mu1 / nhist;
+    
+    
+    
+    nhist2 = sslot5.nvalues; 
+    for (i = 0; i < nhist2; i++)
+    {
+        mu2 += DatumGetFloat8(sslot5.values[i]);
+    }
+    mu2 = mu2 / nhist2;
+
+    
+    
+    
+    len2 = sslot4.nvalues;
+    hist_overlap2 = (int*) palloc(sizeof(int)*len2);
+
+    for (i = 0; i < len2; i++)
+    {
+        hist_overlap2[i] = sslot4.values[i];
+                        
+    }
+    
+
+    
+    
+    if (len<len2){
+    	loop_max = len;
+    }else{
+        loop_max = len2;
+    }
+
+    // join estimation
+    for (i=0;i<loop_max;i++){
+    	result += (hist_overlap[i] /(mu1/2)) * (hist_overlap2[i]/(mu2/2) ) ;
+    }
+    
+    printf("%d\n",result);
+    
+    // normalize result (to change) 
+
+    
+    selec = (float) result / (float)((float)nhist * (float)nhist2);
+ 
+    printf("%f\n",selec);
 
     pfree(hist_lower1);
     pfree(hist_upper1);
     pfree(hist_overlap);
+    pfree(hist_overlap2);
 
     free_attstatsslot(&sslot1);
     free_attstatsslot(&sslot2);
+    free_attstatsslot(&sslot3);
+    free_attstatsslot(&sslot4);
+    free_attstatsslot(&sslot5);
 
     ReleaseVariableStats(vardata1);
     ReleaseVariableStats(vardata2);
