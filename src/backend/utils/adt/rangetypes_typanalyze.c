@@ -467,6 +467,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				index_up = convert_bound_to_index(PointerGetDatum(&uppers_copy[pos]), step);
 				for (j = index_low; j <= index_up; j++){
 					values_overlap[j] = values_overlap[j] + ( 1 / (float) (index_up - index_low + 1) );
+					
 				}	
 						   
 				pos += delta;
@@ -481,9 +482,10 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			
 			for(i=0;i<len;i++){
 				overlap_hist2[i] = Float8GetDatum(values_overlap[i]);
-			
+				printf("%f\n",DatumGetFloat8(overlap_hist2[i]));
 			}
 
+			
 			
 			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;   /* need a new cst */
 			stats->stavalues[slot_idx] = bound_hist_values;     /* save value as range */
