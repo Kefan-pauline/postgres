@@ -80,8 +80,8 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     int         len2;
     RangeBound *hist_lower1;
     RangeBound *hist_upper1;
-    int*        hist_overlap;  
-    int*        hist_overlap2;  
+    float*        hist_overlap;  
+    float*        hist_overlap2;  
     int         i;
     Form_pg_statistic stats1 = NULL;
     TypeCacheEntry *typcache = NULL;
@@ -193,7 +193,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
 
 
     len = sslot2.nvalues;
-    hist_overlap = (int*) palloc(sizeof(int)*len);
+    hist_overlap = (float*) palloc(sizeof(float)*len);
 
     for (i = 0; i < len; i++)
     {
@@ -201,18 +201,18 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
                         
     }
     
-    /*
+
     printf("len : %d \n",len);
     
     printf("hist_overlap = [");
     for (i = 0; i < len; i++)
     {
-        printf("%d", hist_overlap[i]);
+        printf("%f", hist_overlap[i]);
         if (i < len - 1)
             printf(", ");
     }
     printf("]\n");
-    */
+    
     
     
     
@@ -237,7 +237,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
     
     len2 = sslot4.nvalues;
-    hist_overlap2 = (int*) palloc(sizeof(int)*len2);
+    hist_overlap2 = (float*) palloc(sizeof(float)*len2);
 
     for (i = 0; i < len2; i++)
     {
@@ -256,14 +256,14 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
 
     // join estimation
     for (i=0;i<loop_max;i++){
-    	result += (hist_overlap[i] /(mu1/2)) * (hist_overlap2[i]/(mu2/2) ) ;
+    	result += hist_overlap[i]  * hist_overlap2[i] ;
     }
     
     printf("%d\n",result);
     
     // normalize result (to change) 
 
-    
+    //result = result / ((mu1/2)*(mu2/2));
     selec = (float) result / (float)((float)nhist * (float)nhist2);
  
     printf("%f\n",selec);
