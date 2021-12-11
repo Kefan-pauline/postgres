@@ -32,9 +32,6 @@
 #include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
 
-
-
-
 typedef struct dict_entry_s {
 
 	RangeType *key;
@@ -60,8 +57,6 @@ static void compute_range_stats(VacAttrStats *stats,
 								AnalyzeAttrFetchFunc fetchfunc, int samplerows,
 								double totalrows);
 								
-
-
 static void dict_add(dict_t dict, RangeType *key);
 static dict_t dict_new(void);
 static void dict_free(dict_t dict);
@@ -153,7 +148,6 @@ range_bound_qsort_cmp(const void *a1, const void *a2, void *arg)
  * Overlaping histogram functions.
  */
  
-
 static int convert_bound_to_index(Datum bound, int step){
 	int* pointer1;
 	pointer1 = (int*) bound;
@@ -255,11 +249,6 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	TypeCacheEntry *typcache = (TypeCacheEntry *) stats->extra_data;
 	TypeCacheEntry *mltrng_typcache = NULL;
 	bool		has_subdiff;
-	float8	   *lengths;
-	RangeBound *lowers,
-			   *uppers;
-	int* values;
-	float* values_float;
 	int			null_cnt = 0;
 	int			non_null_cnt = 0;
 	int			non_empty_cnt = 0;
@@ -268,16 +257,11 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	int			slot_idx;
 	int			num_bins = stats->attr->attstattarget;
 	int			num_hist;
-	int step;
-	int index_low;
-	int index_up;
-	int j;
-	int len; // number of bins, also the length of values
-	Datum    *overlap_hist2;
-	Datum hist_low; // min value
-	Datum hist_up; // max value
+	float8	   *lengths;
+	RangeBound *lowers, *uppers;
+	RangeBound *lowers_copy;
+	RangeBound *uppers_copy;
 	double		total_width = 0;
-
 
 	if (typcache->typtype == TYPTYPE_MULTIRANGE)
 	{
@@ -291,6 +275,8 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	/* Allocate memory to hold range bounds and lengths of the sample ranges. */
 	lowers = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
 	uppers = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
+	lowers_copy = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
+	uppers_copy = (RangeBound *) palloc(sizeof(RangeBound) * samplerows);
 	lengths = (float8 *) palloc(sizeof(float8) * samplerows);
 	
 
@@ -420,71 +406,40 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		if (non_empty_cnt >= 2)
 		{
 			
-			hist_low = *(int*)PointerGetDatum(&lowers[0]);
+			int j;
+			int step;
+			int index_up;
+			int index_low;
+			int len; 	// number of bins, also the length of values
+			float* values_overlap;
 			
-			hist_up = *(int*)PointerGetDatum(&uppers[samplerows-1]);
-			printf("hist_low %d hist_up %d \n",hist_low,hist_up);
-			step = 2;
-			len = (hist_up - hist_low)/step;
-
-			num_hist = non_empty_cnt;
-			if (num_hist > num_bins)
-				num_hist = num_bins + 1;
-
-			delta = (non_empty_cnt - 1) / (num_hist - 1);
-			deltafrac = (non_empty_cnt - 1) % (num_hist - 1);
-			pos = posfrac = 0;
+			Datum hist_low; // min value
+			Datum hist_up;  // max value
+			Datum    *overlap_hist2;
 			
+			memcpy(lowers_copy, lowers, sizeof(RangeBound) * samplerows);
+			memcpy(uppers_copy, uppers, sizeof(RangeBound) * samplerows);
 			
-			values = (int*) calloc(len, sizeof(int)); 
-			values_float = (float*) calloc(len, sizeof(float)); 
-			overlap_hist2 = (Datum *) palloc(len * sizeof(Datum));
-			
-			
-			
-			
-			for (i = 0; i < num_hist; i++)
-			{
-				printf("low : %d, up : %d \n",*(int*)PointerGetDatum(&lowers[pos]),*(int*)PointerGetDatum(&uppers[pos]));
-				index_low = convert_bound_to_index(PointerGetDatum(&lowers[pos]), step);												   
-				index_up = convert_bound_to_index(PointerGetDatum(&uppers[pos]), step);
-				for (j = index_low; j <= index_up; j++){
-					values[j]++;
-					values_float[j] = (float) values_float[j] + (float) ((float) 1 / (float) (index_up-index_low+1)); 
-					
-				}	
-						   
-				pos += delta;
-				posfrac += deltafrac;
-				if (posfrac >= (num_hist - 1))
-				{
-					/* fractional part exceeds 1, carry to integer part */
-					pos++;
-					posfrac -= (num_hist - 1);
-				}
-			}
-			
-			
-			for (i=0; i < len; i++){
-			
-				overlap_hist2[i] = Float8GetDatum(values_float[i]);
-			
-			}
-			
-			
-			
-			
-			
-			
-			
+				
 			/* Sort bound values */
 			qsort_arg(lowers, non_empty_cnt, sizeof(RangeBound),
 					  range_bound_qsort_cmp, typcache);
 			qsort_arg(uppers, non_empty_cnt, sizeof(RangeBound),
 					  range_bound_qsort_cmp, typcache);
 
+			step = 2;
+			hist_low = *(int*)PointerGetDatum(&lowers[0]);
+			hist_up  = *(int*)PointerGetDatum(&uppers[samplerows-1]);
 			
+			len = (hist_up - hist_low)/step;
 			
+			values_overlap = calloc(len, sizeof(float));
+			overlap_hist2 = (Datum *) palloc(len * sizeof(Datum));
+			
+			num_hist = non_empty_cnt;
+			if (num_hist > num_bins)
+				num_hist = num_bins + 1;
+
 			bound_hist_values = (Datum *) palloc(num_hist * sizeof(Datum));
 
 			/*
@@ -498,7 +453,9 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			 * at each step, tracking the integral and fractional parts of the
 			 * sum separately.
 			 */
-
+			delta = (non_empty_cnt - 1) / (num_hist - 1);
+			deltafrac = (non_empty_cnt - 1) % (num_hist - 1);
+			pos = posfrac = 0;
 
 			for (i = 0; i < num_hist; i++)
 			{
@@ -506,7 +463,11 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 																	   &lowers[pos],
 																	   &uppers[pos],
 																	   false));
-				
+				index_low = convert_bound_to_index(PointerGetDatum(&lowers_copy[pos]),step);												   
+				index_up = convert_bound_to_index(PointerGetDatum(&uppers_copy[pos]), step);
+				for (j = index_low; j <= index_up; j++){
+					values_overlap[j] = values_overlap[j] + ( 1 / (float) (index_up - index_low + 1) );
+				}	
 						   
 				pos += delta;
 				posfrac += deltafrac;
@@ -518,7 +479,10 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				}
 			}
 			
-
+			for(i=0;i<len;i++){
+				overlap_hist2[i] = Float8GetDatum(values_overlap[i]);
+			
+			}
 
 			
 			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;   /* need a new cst */
@@ -643,7 +607,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	 * We don't need to bother cleaning up any of our temporary palloc's. The
 	 * hashtable should also go away, as it used a child memory context.
 	 */
-	 free(values);
 }
+
 
 
