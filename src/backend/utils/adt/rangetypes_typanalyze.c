@@ -411,7 +411,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			int index_up;
 			int index_low;
 			int len; 	// number of bins, also the length of values
-			int* values;	// overlap_histogram;
+			float* values_overlap;
 			
 			Datum hist_low; // min value
 			Datum hist_up;  // max value
@@ -427,14 +427,13 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			qsort_arg(uppers, non_empty_cnt, sizeof(RangeBound),
 					  range_bound_qsort_cmp, typcache);
 
-
 			step = 2;
 			hist_low = *(int*)PointerGetDatum(&lowers[0]);
 			hist_up  = *(int*)PointerGetDatum(&uppers[samplerows-1]);
 			
 			len = (hist_up - hist_low)/step;
 			
-			values = calloc(len, sizeof(int));
+			values_overlap = calloc(len, sizeof(float));
 			overlap_hist2 = (Datum *) palloc(len * sizeof(Datum));
 			
 			num_hist = non_empty_cnt;
@@ -467,7 +466,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 				index_low = convert_bound_to_index(PointerGetDatum(&lowers_copy[pos]),step);												   
 				index_up = convert_bound_to_index(PointerGetDatum(&uppers_copy[pos]), step);
 				for (j = index_low; j <= index_up; j++){
-					values[j]++;
+					values_overlap[j] = values_overlap[j] + ( 1 / (float) (index_up - index_low + 1) );
 				}	
 						   
 				pos += delta;
@@ -481,7 +480,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			}
 			
 			for(i=0;i<len;i++){
-				overlap_hist2[i] = values[i];
+				overlap_hist2[i] = Float8GetDatum(values_overlap[i]);
 			
 			}
 
