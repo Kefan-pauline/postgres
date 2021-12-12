@@ -67,6 +67,31 @@ typedef struct
 	bool		lower;			/* this is the lower (vs upper) bound */
 } RangeBound;
 
+
+
+/* dict_mcv struct declaration */
+typedef struct dict_entry_s {
+
+	RangeType *key;
+	int value;
+
+} dict_entry;
+
+typedef struct dict_mcv {
+
+	int len;
+	int limit_entry;
+	dict_entry *entry;
+	
+} dict_mcv, *dict_t;
+
+static void dict_add(TypeCacheEntry *typcache, dict_t dict, RangeType *key, RangeBound lower, RangeBound upper);
+static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lower2, RangeBound upper2);
+static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, RangeBound lower, RangeBound upper); 
+static dict_t dict_new(void);
+static void dict_free(dict_t dict);
+int compare(const void* ptr1, const void* ptr2);
+
 /*
  * fmgr macros for range type objects
  */

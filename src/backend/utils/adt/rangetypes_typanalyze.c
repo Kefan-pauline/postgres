@@ -32,22 +32,6 @@
 #include "utils/rangetypes.h"
 #include "utils/multirangetypes.h"
 
-typedef struct dict_entry_s {
-
-	RangeType *key;
-	int value;
-
-} dict_entry;
-
-typedef struct dict_mcv {
-
-	int len;
-	int limit_entry;
-	dict_entry *entry;
-	
-} dict_mcv, *dict_t;
-
-
 
 static int	float8_qsort_cmp(const void *a1, const void *a2);
 static int	range_bound_qsort_cmp(const void *a1, const void *a2, void *arg);
@@ -55,12 +39,7 @@ static void compute_range_stats(VacAttrStats *stats,
 								AnalyzeAttrFetchFunc fetchfunc, int samplerows,
 								double totalrows);
 								
-static void dict_add(TypeCacheEntry *typcache, dict_t dict, RangeType *key, RangeBound lower, RangeBound upper);
-static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lower2, RangeBound upper2);
-static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, RangeBound lower, RangeBound upper); 
-static dict_t dict_new(void);
-static void dict_free(dict_t dict);
-int compare(const void* ptr1, const void* ptr2);
+
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -402,7 +381,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
         
         	mcv_stats[i] = (Datum)&dict_mcv->entry[i];
         	entry = *(dict_entry *)mcv_stats[i];
-        	printf("value : %d\n", entry.value);
+        	
 
         }
         
@@ -552,13 +531,14 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			
 		}
 		
-		/* stock  mcv stats */
+		/* stock mcv stats */
+		
 		stats->stakind[slot_idx] = STATISTIC_MCV;  
 		stats->stavalues[slot_idx] = mcv_stats;     
 		stats->numvalues[slot_idx] = dict_mcv->len;
 
 
-		stats->statypid[slot_idx] = FLOAT8OID;              /* 4 lines : length hist is float values */
+		stats->statypid[slot_idx] = FLOAT8OID;              
 		stats->statyplen[slot_idx] = sizeof(float8);
 		stats->statypbyval[slot_idx] = FLOAT8PASSBYVAL;
 		stats->statypalign[slot_idx] = 'd';

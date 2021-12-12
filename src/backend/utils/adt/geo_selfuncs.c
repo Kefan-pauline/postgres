@@ -49,6 +49,8 @@
  *	ought to be adjusted accordingly --- but until we can generate somewhat
  *	realistic numbers here, it hardly matters...
  */
+ 
+
 
 /*
  * Range Overlaps Join Selectivity.
@@ -74,10 +76,12 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     AttStatsSlot sslot3; // length hist for column 1
     AttStatsSlot sslot4; // overlap hist for column 2
     AttStatsSlot sslot5; // length hist for column 2
+    AttStatsSlot sslot6; // mcv for column 1
     int         nhist;
     int         nhist2;
     int         len;
     int         len2;
+    int         mcv_len;
     RangeBound *hist_lower1;
     RangeBound *hist_upper1;
     float*        hist_overlap;  
@@ -91,6 +95,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     int         result = 0;
     float       mu1 = 0;
     float       mu2 = 0;
+    dict_entry    *mcv_stats;
     
     
 
@@ -106,6 +111,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     memset(&sslot3, 0, sizeof(sslot3));
     memset(&sslot4, 0, sizeof(sslot4));
     memset(&sslot5, 0, sizeof(sslot5));
+    memset(&sslot6, 0, sizeof(sslot6));
     
     /* Can't use the histogram with insecure range support functions */
     if (!statistic_proc_security_check(&vardata1, opfuncoid))
@@ -149,6 +155,14 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         }
         if (!get_attstatsslot(&sslot5, vardata2.statsTuple,        /* store in slot2 (5 in total) the histogram, here the len hist */
                              STATISTIC_KIND_RANGE_LENGTH_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
+        if (!get_attstatsslot(&sslot6, vardata1.statsTuple,        /* store in slot6 the mcv */
+                             STATISTIC_MCV,
                              InvalidOid, ATTSTATSSLOT_VALUES))
         {
             ReleaseVariableStats(vardata1);
@@ -201,7 +215,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
                         
     }
     
-
+/*
     printf("len : %d \n",len);
     
     printf("hist_overlap = [");
@@ -212,7 +226,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
             printf(", ");
     }
     printf("]\n");
-    
+    */
     
     
     
@@ -246,8 +260,20 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     }
     
 
+
+    mcv_len = sslot6.nvalues;
+    mcv_stats = (dict_entry*) palloc(sizeof(dict_entry)*mcv_len);
+    for (i = 0; i < mcv_len; i++)
+    {
+        mcv_stats[i] = *(dict_entry *) sslot6.values[i];
+        printf("value : %d\n", mcv_stats[i].value);
+                        
+    }
+
     
     
+    
+    /*          join estimation        */
     if (len<len2){
     	loop_max = len;
     }else{
@@ -259,14 +285,12 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     	result += hist_overlap[i]  * hist_overlap2[i] ;
     }
     
-    printf("%d\n",result);
+    printf("result : %d\n",result);
     
-    // normalize result (to change) 
-
-    //result = result / ((mu1/2)*(mu2/2));
+    // transform to a percentage
     selec = result / (float)(nhist * nhist2);
  
-    printf("%f\n",selec);
+    printf("selec : %f\n",selec);
 
     pfree(hist_lower1);
     pfree(hist_upper1);
@@ -278,6 +302,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     free_attstatsslot(&sslot3);
     free_attstatsslot(&sslot4);
     free_attstatsslot(&sslot5);
+    free_attstatsslot(&sslot6);
 
     ReleaseVariableStats(vardata1);
     ReleaseVariableStats(vardata2);
