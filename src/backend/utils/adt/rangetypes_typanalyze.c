@@ -47,8 +47,6 @@ typedef struct dict_mcv {
 	
 } dict_mcv, *dict_t;
 
-static dict_t dict;
-static RangeType *key;
 
 
 static int	float8_qsort_cmp(const void *a1, const void *a2);
@@ -57,10 +55,11 @@ static void compute_range_stats(VacAttrStats *stats,
 								AnalyzeAttrFetchFunc fetchfunc, int samplerows,
 								double totalrows);
 								
-static void dict_add(dict_t dict, RangeType *key);
+static void dict_add(TypeCacheEntry *typcache, dict_t dict, RangeType *key, RangeBound lower, RangeBound upper);
+static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lower2, RangeBound upper2);
+static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, RangeBound lower, RangeBound upper); 
 static dict_t dict_new(void);
 static void dict_free(dict_t dict);
-static void display_dict(dict_t dict, RangeType *key);
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -151,7 +150,7 @@ range_bound_qsort_cmp(const void *a1, const void *a2, void *arg)
 static int convert_bound_to_index(Datum bound, int step){
 	int* pointer1;
 	pointer1 = (int*) bound;
-	//printf("%d\n",(*pointer1/ step));
+
 	return (int) (*pointer1/ step);
 }
 
@@ -159,28 +158,52 @@ static int convert_bound_to_index(Datum bound, int step){
 /*
  * MCV functions.
  */
+static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lower2, RangeBound upper2){
+
+	bool res;
+	
+	res = 0;
+	
+	return res;
+}
  
-int dict_find_index(PG_FUNCTION_ARGS) {
  
- 	bool res;
- 	TypeCacheEntry *typcache;
+static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, RangeBound lower, RangeBound upper) {
+ 
+
+        bool res;
+        bool empty2;
+ 	RangeBound    lower2;
+ 	RangeBound    upper2;
  	
- 	typcache = range_get_typcache(fcinfo, RangeTypeGetOid(key));
- 	
+ 	printf("Add key lower : %d\n", DatumGetInt32(lower.val)); 
+	printf("Add key upper : %d\n", DatumGetInt32(upper.val));
+		
  	for(int i = 0; i < dict->len; i++) {
- 	
- 		res = range_eq_internal(typcache,dict->entry[i].key, key);
  		
- 		if(res) { return i;}
+ 		
+ 		range_deserialize(typcache, key, &lower2, &upper2, &empty2);
+ 		printf("Dict key lower : %d\n", DatumGetInt32(lower2.val)); 
+		printf("Dict key lower: %d\n", DatumGetInt32(upper2.val));
+ 		
+ 		res = 0;
+ 		if(res) { 
+ 		
+ 			printf("index : %d\n",i);
+ 			return i;
+ 		}
 		
 	}
+	
+	return -1;
 
  }
  
-static void dict_add(dict_t dict, RangeType *key) {
-
+static void dict_add(TypeCacheEntry *typcache, dict_t dict, RangeType *key_, RangeBound lower, RangeBound upper) {
 	
-	int index = dict_find_index("nothing");
+	RangeType* key_final;
+	
+	int index = dict_find_index(typcache,dict,key_,lower,upper);
 	
 	if(dict->len == dict->limit_entry) {
 		dict->limit_entry *= 2;
@@ -192,17 +215,29 @@ static void dict_add(dict_t dict, RangeType *key) {
 		return;
 	}
 	
-	dict->entry[dict->len].key = strdup(key);
+	key_final = malloc(sizeof(RangeType));
+	
+	key_final->vl_len_ = key_->vl_len_;
+	key_final->rangetypid = key_->rangetypid;
+	
+	dict->entry[dict->len].key = key_final;
 	dict->entry[dict->len].value = 1;
 	dict->len++;
-	
 }
 
 static dict_t dict_new(void) {
 	
+	int   i;
 	dict_t res;
+	dict_entry *entry;
+
+	entry = malloc(20 * sizeof(dict_entry));
 	
-	dict_mcv dict = {0, 20, malloc(20 * sizeof(dict_entry)) };
+	for(i = 0;i<20;i++){
+		entry[i] = (dict_entry){NULL,0};
+	}
+	
+	dict_mcv dict = {0, 20, entry };
 	res = malloc(sizeof(dict_mcv));
 	*res = dict;
 	return res;
@@ -223,22 +258,6 @@ static void dict_free(dict_t dict) {
 }
 
 
-static void display_dict(dict_t dict, RangeType *key) {
-	
-	int index;
-
-	index = dict_find_index("nothing");
-	
-	if(index != -1) {
-		//printf("Key %s : %d\n", key, dict->entry[index].value);
-		return;
-	}
-	
-	else {
-		printf("Erreur Key not found !\n");
-	}
-}
-
 /*
  * compute_range_stats() -- compute statistics for a range column
  */
@@ -257,11 +276,16 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	int			slot_idx;
 	int			num_bins = stats->attr->attstattarget;
 	int			num_hist;
+	int                    i;
 	float8	   *lengths;
 	RangeBound *lowers, *uppers;
 	RangeBound *lowers_copy;
 	RangeBound *uppers_copy;
 	double		total_width = 0;
+	dict_t    dict_mcv;
+	dict_mcv = dict_new();
+	
+
 
 	if (typcache->typtype == TYPTYPE_MULTIRANGE)
 	{
@@ -283,14 +307,17 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	/* Loop over the sample ranges. */
 	for (range_no = 0; range_no < samplerows; range_no++)
 	{
+
 		Datum		value;
 		bool		isnull,
 					empty;
 		MultirangeType *multirange;
 		RangeType  *range;
-		RangeBound	lower,
-					upper;
+		RangeBound	lower,upper;
 		float8		length;
+		
+		
+		
 
 		vacuum_delay_point();
 
@@ -340,6 +367,8 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			/* Remember bounds and length for further usage in histograms */
 			lowers[non_empty_cnt] = lower;
 			uppers[non_empty_cnt] = upper;
+			
+			dict_add(typcache,dict_mcv,range,lower,upper);
 
 			if (lower.infinite || upper.infinite)
 			{
@@ -371,6 +400,9 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		non_null_cnt++;
 	}
 	
+        /*for(i = 0;i<dict_mcv->len;i++){
+		printf("mcv %d : %d \n",i, dict_mcv->entry[i].value);
+	}*/
 
 	slot_idx = 0;
 
@@ -482,7 +514,6 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			
 			for(i=0;i<len;i++){
 				overlap_hist2[i] = Float8GetDatum(values_overlap[i]);
-				printf("%f\n",DatumGetFloat8(overlap_hist2[i]));
 			}
 
 			
@@ -609,6 +640,8 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	 * We don't need to bother cleaning up any of our temporary palloc's. The
 	 * hashtable should also go away, as it used a child memory context.
 	 */
+	 
+	 dict_free(dict_mcv);
 }
 
 
