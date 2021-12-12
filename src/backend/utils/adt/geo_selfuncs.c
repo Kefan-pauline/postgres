@@ -201,41 +201,6 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
                         
     }
     
-
-    printf("len : %d \n",len);
-    
-    printf("hist_overlap = [");
-    for (i = 0; i < len; i++)
-    {
-        printf("%f", hist_overlap[i]);
-        if (i < len - 1)
-            printf(", ");
-    }
-    printf("]\n");
-    
-    
-    
-    
-
-    
-    for (i = 0; i < nhist; i++)
-    {
-        mu1 += DatumGetFloat8(sslot3.values[i]);
-    }
-    mu1 = mu1 / nhist;
-    
-    
-    
-    nhist2 = sslot5.nvalues; 
-    for (i = 0; i < nhist2; i++)
-    {
-        mu2 += DatumGetFloat8(sslot5.values[i]);
-    }
-    mu2 = mu2 / nhist2;
-
-    
-    
-    
     len2 = sslot4.nvalues;
     hist_overlap2 = (float*) palloc(sizeof(float)*len2);
 
@@ -244,9 +209,6 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         hist_overlap2[i] = DatumGetFloat8(sslot4.values[i]);
                         
     }
-    
-
-    
     
     if (len<len2){
     	loop_max = len;
