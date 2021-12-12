@@ -279,6 +279,8 @@ DECLARE_FOREIGN_KEY((starelid, staattnum), pg_attribute, (attrelid, attnum));
 
 #define STATISTIC_KIND_OVERLAP_HISTOGRAM  8
 
+#define STATISTIC_MCV  9
+
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 
 #endif							/* PG_STATISTIC_H */

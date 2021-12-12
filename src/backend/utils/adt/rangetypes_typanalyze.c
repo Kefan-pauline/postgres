@@ -60,6 +60,7 @@ static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lo
 static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, RangeBound lower, RangeBound upper); 
 static dict_t dict_new(void);
 static void dict_free(dict_t dict);
+int compare(const void* ptr1, const void* ptr2);
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -160,11 +161,8 @@ static int convert_bound_to_index(Datum bound, int step){
  */
 static bool rangetypes_equal(RangeBound lower1, RangeBound upper1, RangeBound lower2, RangeBound upper2){
 
-	bool res;
-	
-	res = 0;
-	
-	return res;
+	return ((DatumGetInt32(lower1.val)==DatumGetInt32(lower2.val)) && 
+	       (DatumGetInt32(upper1.val)==DatumGetInt32(upper2.val)));
 }
  
  
@@ -175,24 +173,17 @@ static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, 
         bool empty2;
  	RangeBound    lower2;
  	RangeBound    upper2;
- 	
- 	printf("Add key lower : %d\n", DatumGetInt32(lower.val)); 
-	printf("Add key upper : %d\n", DatumGetInt32(upper.val));
 		
  	for(int i = 0; i < dict->len; i++) {
  		
  		
- 		range_deserialize(typcache, key, &lower2, &upper2, &empty2);
- 		printf("Dict key lower : %d\n", DatumGetInt32(lower2.val)); 
-		printf("Dict key lower: %d\n", DatumGetInt32(upper2.val));
+ 		range_deserialize(typcache, dict->entry[i].key, &lower2, &upper2, &empty2);
  		
- 		res = 0;
- 		if(res) { 
  		
- 			printf("index : %d\n",i);
+ 		if (rangetypes_equal(lower,upper,lower2,upper2)){
  			return i;
- 		}
-		
+ 		
+ 		}	
 	}
 	
 	return -1;
@@ -220,7 +211,7 @@ static void dict_add(TypeCacheEntry *typcache, dict_t dict, RangeType *key_, Ran
 	key_final->vl_len_ = key_->vl_len_;
 	key_final->rangetypid = key_->rangetypid;
 	
-	dict->entry[dict->len].key = key_final;
+	dict->entry[dict->len].key = key_;
 	dict->entry[dict->len].value = 1;
 	dict->len++;
 }
@@ -230,14 +221,14 @@ static dict_t dict_new(void) {
 	int   i;
 	dict_t res;
 	dict_entry *entry;
-
+	
 	entry = malloc(20 * sizeof(dict_entry));
 	
-	for(i = 0;i<20;i++){
-		entry[i] = (dict_entry){NULL,0};
+	for(i = 0; i < 20; i++) {
+		entry[i] = (dict_entry) {NULL, 0};
 	}
-	
-	dict_mcv dict = {0, 20, entry };
+
+	dict_mcv dict = {0, 20, entry};
 	res = malloc(sizeof(dict_mcv));
 	*res = dict;
 	return res;
@@ -246,15 +237,16 @@ static dict_t dict_new(void) {
 
 
 static void dict_free(dict_t dict) {
-
-
-	for(int i = 0; i < dict->len; i++) {
-		free(dict->entry[i].key);
-	} 
 	
 	free(dict->entry);
 	free(dict);
 
+}
+
+int compare(const void* ptr1, const void* ptr2){
+	dict_entry* val1 = (dict_entry*) ptr1;
+	dict_entry* val2 = (dict_entry*) ptr2;
+	return (val2->value - val1->value);
 }
 
 
@@ -284,6 +276,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 	double		total_width = 0;
 	dict_t    dict_mcv;
 	dict_mcv = dict_new();
+	Datum      *mcv_stats;
 	
 
 
@@ -400,9 +393,21 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		non_null_cnt++;
 	}
 	
-        /*for(i = 0;i<dict_mcv->len;i++){
-		printf("mcv %d : %d \n",i, dict_mcv->entry[i].value);
-	}*/
+        qsort(dict_mcv->entry,dict_mcv->len,sizeof(dict_entry),compare);
+        
+        mcv_stats = malloc(dict_mcv->len * sizeof(Datum));
+        
+        dict_entry entry;
+        for (i=0;i<dict_mcv->len;i++){
+        
+        	mcv_stats[i] = (Datum)&dict_mcv->entry[i];
+        	entry = *(dict_entry *)mcv_stats[i];
+        	printf("value : %d\n", entry.value);
+
+        }
+        
+        
+        
 
 	slot_idx = 0;
 
@@ -547,7 +552,19 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			
 		}
 		
+		/* stock  mcv stats */
+		stats->stakind[slot_idx] = STATISTIC_MCV;  
+		stats->stavalues[slot_idx] = mcv_stats;     
+		stats->numvalues[slot_idx] = dict_mcv->len;
 
+
+		stats->statypid[slot_idx] = FLOAT8OID;              /* 4 lines : length hist is float values */
+		stats->statyplen[slot_idx] = sizeof(float8);
+		stats->statypbyval[slot_idx] = FLOAT8PASSBYVAL;
+		stats->statypalign[slot_idx] = 'd';
+		
+		slot_idx++;
+		
 
 		/*
 		 * Generate a length histogram slot entry if there are at least two
