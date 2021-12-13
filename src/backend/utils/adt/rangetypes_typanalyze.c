@@ -127,11 +127,8 @@ range_bound_qsort_cmp(const void *a1, const void *a2, void *arg)
  * Overlaping histogram functions.
  */
  
-static int convert_bound_to_index(Datum bound, int step){
-	int* pointer1;
-	pointer1 = (int*) bound;
-
-	return (int) (*pointer1/ step);
+int convert_bound_to_index(Datum bound, int step, int min){
+	return (int) ((*(int*) bound - min) / step);
 }
 
 
@@ -479,8 +476,8 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 																	   &lowers[pos],
 																	   &uppers[pos],
 																	   false));
-				index_low = convert_bound_to_index(PointerGetDatum(&lowers_copy[pos]),step);												   
-				index_up = convert_bound_to_index(PointerGetDatum(&uppers_copy[pos]), step);
+				index_low = convert_bound_to_index(PointerGetDatum(&lowers_copy[pos]),step,hist_low);												   
+				index_up = convert_bound_to_index(PointerGetDatum(&uppers_copy[pos]), step,hist_low);
 				for (j = index_low; j <= index_up; j++){
 					values_overlap[j] = values_overlap[j] + ( 1 / (float) (index_up - index_low + 1) );
 					

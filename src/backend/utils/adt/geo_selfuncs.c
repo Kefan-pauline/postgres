@@ -51,6 +51,10 @@
  */
  
 
+int convert_bound_to_index1(int bound, int step, int min){
+	return (int) ( (bound - min) / step);
+}
+
 
 /*
  * Range Overlaps Join Selectivity.
@@ -77,16 +81,28 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     AttStatsSlot sslot4; // overlap hist for column 2
     AttStatsSlot sslot5; // length hist for column 2
     AttStatsSlot sslot6; // mcv for column 1
+    AttStatsSlot sslot7; // bound hist for column 2
     int         nhist;
     int         nhist2;
+    int         nhist7;
     int         len;
     int         len2;
     int         mcv_len;
+    int         step1;
+    int         step2;
+    int         lower_bound;
+    int       	upper_bound;
+    int 	index1;
+    int 	index2;
+    
     RangeBound *hist_lower1;
     RangeBound *hist_upper1;
+    RangeBound *hist_lower2;
+    RangeBound *hist_upper2;
     float*        hist_overlap;  
     float*        hist_overlap2;  
     int         i;
+    int         j;
     Form_pg_statistic stats1 = NULL;
     TypeCacheEntry *typcache = NULL;
     bool        join_is_reversed;
@@ -112,6 +128,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     memset(&sslot4, 0, sizeof(sslot4));
     memset(&sslot5, 0, sizeof(sslot5));
     memset(&sslot6, 0, sizeof(sslot6));
+    memset(&sslot7, 0, sizeof(sslot7));
     
     /* Can't use the histogram with insecure range support functions */
     if (!statistic_proc_security_check(&vardata1, opfuncoid))
@@ -169,6 +186,14 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
             ReleaseVariableStats(vardata2);
             PG_RETURN_FLOAT8((float8) selec);
         }
+        if (!get_attstatsslot(&sslot7, vardata2.statsTuple,        /* store in slot1 (5 in total) the histogram, here the bound hist */
+                             STATISTIC_KIND_BOUNDS_HISTOGRAM,
+                             InvalidOid, ATTSTATSSLOT_VALUES))
+        {
+            ReleaseVariableStats(vardata1);
+            ReleaseVariableStats(vardata2);
+            PG_RETURN_FLOAT8((float8) selec);
+        }
     }
 
     nhist = sslot1.nvalues;    /* split the bounds into lower and upper : bound hist contains ranges, we deserialize */
@@ -183,6 +208,26 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
         if (empty)
             elog(ERROR, "bounds histogram contains an empty range");
     }
+    
+    
+
+    
+    
+    nhist7 = sslot7.nvalues;    /* split the bounds into lower and upper : bound hist contains ranges, we deserialize */
+    
+    hist_lower2 = (RangeBound *) palloc(sizeof(RangeBound) * nhist7);
+    hist_upper2 = (RangeBound *) palloc(sizeof(RangeBound) * nhist7);
+    for (i = 0; i < nhist7; i++)
+    {
+        range_deserialize(typcache, DatumGetRangeTypeP(sslot7.values[i]),
+                          &hist_lower2[i], &hist_upper2[i], &empty);
+        /* The histogram should not contain any empty ranges */
+        if (empty)
+            elog(ERROR, "bounds histogram contains an empty range");
+    }
+    
+    
+
     
     /*
     printf("hist_lower = [");
@@ -231,7 +276,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
     
 
-    
+    /*
     for (i = 0; i < nhist; i++)
     {
         mu1 += DatumGetFloat8(sslot3.values[i]);
@@ -240,14 +285,14 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
     
     
-    nhist2 = sslot5.nvalues; 
+    
     for (i = 0; i < nhist2; i++)
     {
         mu2 += DatumGetFloat8(sslot5.values[i]);
     }
-    mu2 = mu2 / nhist2;
+    mu2 = mu2 / nhist2;*/
 
-    
+    nhist2 = sslot5.nvalues; 
     
     
     len2 = sslot4.nvalues;
@@ -266,7 +311,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     for (i = 0; i < mcv_len; i++)
     {
         mcv_stats[i] = *(dict_entry *) sslot6.values[i];
-        printf("value : %d\n", mcv_stats[i].value);
+        //printf("value : %d\n", mcv_stats[i].value);
                         
     }
 
@@ -274,18 +319,30 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
     
     /*          join estimation        */
-    if (len<len2){
-    	loop_max = len;
-    }else{
-        loop_max = len2;
-    }
-
-    // join estimation
-    for (i=0;i<loop_max;i++){
-    	result += hist_overlap[i]  * hist_overlap2[i] ;
+    step1 = (DatumGetInt32(hist_upper1[nhist-1].val) - DatumGetInt32(hist_lower1[0].val)) / len;
+    step2 = (DatumGetInt32(hist_upper2[nhist7-1].val) - DatumGetInt32(hist_lower2[0].val)) / len2;
+    
+    
+    // loop over left column
+    for (i=0;i<len-1;i++){
+    	lower_bound = DatumGetInt32(hist_lower1[0].val) + i * step1;
+    	upper_bound = DatumGetInt32(hist_lower1[0].val) + (i+1) * step1;
+    	index1 = convert_bound_to_index1(lower_bound, step2, DatumGetInt32(hist_lower2[0].val));
+    	index2 = convert_bound_to_index1(upper_bound, step2, DatumGetInt32(hist_lower2[0].val));
+    	
+    	for (j = index1; j <= index2; j++){
+    		if (j < len2 && j>= 0){
+			result = result + hist_overlap[i] * hist_overlap2[j];
+		}		
+	}	
     }
     
+    
+
+    
     printf("result : %d\n",result);
+    printf("nhist: %d\n",nhist);
+    printf("nhist2 : %d\n",nhist2);
     
     // transform to a percentage
     selec = result / (float)(nhist * nhist2);

@@ -91,7 +91,7 @@ static int dict_find_index(TypeCacheEntry *typcache,dict_t dict,RangeType *key, 
 static dict_t dict_new(void);
 static void dict_free(dict_t dict);
 int compare(const void* ptr1, const void* ptr2);
-
+int convert_bound_to_index(Datum bound, int step, int min);
 /*
  * fmgr macros for range type objects
  */
