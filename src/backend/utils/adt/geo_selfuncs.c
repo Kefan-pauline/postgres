@@ -108,7 +108,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     bool        join_is_reversed;
     bool        empty;
     int         loop_max;
-    int         result = 0;
+    float         result = 0.0f;
     float       mu1 = 0;
     float       mu2 = 0;
     dict_entry    *mcv_stats;
@@ -332,7 +332,10 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     	
     	for (j = index1; j <= index2; j++){
     		if (j < len2 && j>= 0){
+    			//printf("maj\n");
 			result = result + hist_overlap[i] * hist_overlap2[j];
+			//printf("hist_overlap1 %f\n",hist_overlap[i]);
+			//printf("hist_overlap2 %f\n",hist_overlap2[j]);
 		}		
 	}	
     }
@@ -340,9 +343,11 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     
 
     
-    printf("result : %d\n",result);
+    printf("result : %f\n",result);
     printf("nhist: %d\n",nhist);
     printf("nhist2 : %d\n",nhist2);
+    printf("len: %d\n",len);
+    printf("len2 : %d\n",len2);
     
     // transform to a percentage
     selec = result / (float)(nhist * nhist2);
@@ -351,8 +356,11 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
 
     pfree(hist_lower1);
     pfree(hist_upper1);
+    pfree(hist_lower2);
+    pfree(hist_upper2);
     pfree(hist_overlap);
     pfree(hist_overlap2);
+    pfree(mcv_stats);
 
     free_attstatsslot(&sslot1);
     free_attstatsslot(&sslot2);
@@ -360,6 +368,7 @@ rangeoverlapsjoinsel(PG_FUNCTION_ARGS)
     free_attstatsslot(&sslot4);
     free_attstatsslot(&sslot5);
     free_attstatsslot(&sslot6);
+    free_attstatsslot(&sslot7);
 
     ReleaseVariableStats(vardata1);
     ReleaseVariableStats(vardata2);

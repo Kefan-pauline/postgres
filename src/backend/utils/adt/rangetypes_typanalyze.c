@@ -502,6 +502,8 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			stats->stakind[slot_idx] = STATISTIC_KIND_BOUNDS_HISTOGRAM;   /* need a new cst */
 			stats->stavalues[slot_idx] = bound_hist_values;     /* save value as range */
 			stats->numvalues[slot_idx] = num_hist;
+			
+
 
 			/* Store ranges even if we're analyzing a multirange column */
 			stats->statypid[slot_idx] = typcache->type_id;
